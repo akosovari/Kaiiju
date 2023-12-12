@@ -1,0 +1,60 @@
+commit 7e81822f2c39089e0cfae8d97a1843ba0371a45d
+Author: Xymb <xymb@endcrystal.me>
+Date:   Tue Aug 1 05:35:04 2023 +0200
+
+    Global bukkit event synchronization.
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+index 8e8c001aa..8500ed750 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+@@ -278,6 +278,8 @@ public class KaiijuConfig {
+     public static boolean multithreadKeepalivePacket = false;
+     public static boolean disableMapSending = false;
+
++    public static boolean globalBukkitEventSynchronization = false;
++
+     private static void gameplaySettings() {
+         serverModName = getString("gameplay.server-mod-name", serverModName);
+         sharedRandomForPlayers = getBoolean("gameplay.shared-random-for-players", sharedRandomForPlayers);
+@@ -360,6 +362,8 @@ public class KaiijuConfig {
+         multithreadBroadcastPacket = getBoolean("optimization.multithread-broadcast-packet", multithreadBroadcastPacket);
+         multithreadKeepalivePacket = getBoolean("optimization.multithread-keepalive-packet", multithreadKeepalivePacket);
+         disableMapSending = getBoolean("gameplay.disable-map-sending", disableMapSending);
++
++        globalBukkitEventSynchronization = getBoolean("compatibility.global-bukkit-event-synchronization", globalBukkitEventSynchronization);
+     }
+
+     public static int serverboundPacketDistanceLimit = 128;
+diff --git a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
+index 854846dd2..f0eb861b3 100644
+--- a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
++++ b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
+@@ -53,7 +53,15 @@ class PaperEventManager {
+             }
+
+             try {
+-                registration.callEvent(event);
++                // Kaiiju start
++                if (dev.kaiijumc.kaiiju.KaiijuConfig.globalBukkitEventSynchronization) {
++                    synchronized(xymb.GlobalPluginSynchronizer.lock) {
++                        registration.callEvent(event);
++                    }
++                } else {
++                // Kaiiju end
++                    registration.callEvent(event);
++                } // Kaiiju
+             } catch (AuthorNagException ex) {
+                 Plugin plugin = registration.getPlugin();
+
+diff --git a/src/main/java/xymb/GlobalPluginSynchronizer.java b/src/main/java/xymb/GlobalPluginSynchronizer.java
+new file mode 100644
+index 000000000..74189ddbc
+--- /dev/null
++++ b/src/main/java/xymb/GlobalPluginSynchronizer.java
+@@ -0,0 +1,5 @@
++package xymb;
++
++public class GlobalPluginSynchronizer {
++    public static Object lock = new Object();
++}

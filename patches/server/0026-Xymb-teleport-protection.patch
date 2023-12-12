@@ -1,0 +1,126 @@
+commit 77f1444ba38fb7d2008170a4b352fa477237e280
+Author: Xymb <xymb@endcrystal.me>
+Date:   Wed Jun 28 22:26:50 2023 +0200
+
+    Security: Disallow long-range teleportation by player movement event.
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+index cc035e46e..0744adc58 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+@@ -260,12 +260,13 @@ public class KaiijuConfig {
+         warnOnNoComAttempt = getBoolean("security.warn-on-nocom-attempt", warnOnNoComAttempt);
+     }
+
+-    public static int longRangeTeleportDistance = 256;
+-    public static String teleportBlacklistString = ".nocheatplus.";
++    public static int longRangeMovementEventCancel = 64;
++    public static int longRangeTeleportDistance = 0;
++    public static String teleportBlacklistString = "";
+     public static String teleportWhitelistString = "";
+     public static java.util.ArrayList<String> teleportBlacklist = new java.util.ArrayList<String>();
+     public static java.util.ArrayList<String> teleportWhitelist = new java.util.ArrayList<String>();
+-    public static boolean teleportVerbose = true;
++    public static boolean teleportVerbose = false;
+     public static boolean teleportDefaultAllow = true;
+
+     private static void teleportSettings() {
+@@ -276,6 +277,7 @@ public class KaiijuConfig {
+         teleportWhitelist = new java.util.ArrayList<String>(java.util.Arrays.asList(teleportBlacklistString.split("\\|")));
+         teleportVerbose = getBoolean("teleport.verbose", teleportVerbose);
+         teleportDefaultAllow = getBoolean("teleport.default-allow", teleportDefaultAllow);
++        longRangeMovementEventCancel = getInt("teleport.long-range-movement-event-cancel", longRangeMovementEventCancel);
+     }
+
+ }
+diff --git a/src/main/java/net/minecraft/server/level/ServerPlayer.java b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+index 6ee2d4c48..2a33cbb2e 100644
+--- a/src/main/java/net/minecraft/server/level/ServerPlayer.java
++++ b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+@@ -329,6 +329,7 @@ public class ServerPlayer extends Player {
+     }
+
+     public boolean isTeleportAccepted(double x, double z) {
++        if (true) return true;
+         boolean verbose = dev.kaiijumc.kaiiju.KaiijuConfig.teleportVerbose;
+
+         if (teleportPermitEverything > 0) return true;
+diff --git a/src/main/java/net/minecraft/server/network/ServerGamePacketListenerImpl.java b/src/main/java/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+index bbbc74843..18a60cf4b 100644
+--- a/src/main/java/net/minecraft/server/network/ServerGamePacketListenerImpl.java
++++ b/src/main/java/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+@@ -597,6 +597,29 @@ public class ServerGamePacketListenerImpl implements ServerPlayerConnection, Tic
+         return Mth.clamp(d, -2.0E7D, 2.0E7D);
+     }
+
++    // Kaiiju start
++    private boolean eventShouldBeCancelled(Location from, Location to) {
++        int longRangeMovementEventCancel = dev.kaiijumc.kaiiju.KaiijuConfig.longRangeMovementEventCancel;
++        if (longRangeMovementEventCancel > 0) {
++            double fromXa = from.x() - this.player.getX();
++            double fromZa = from.z() - this.player.getZ();
++            double toXa = to.x() - this.player.getX();
++            double toZa = to.z() - this.player.getZ();
++            double fromDist = Math.sqrt(fromXa * fromXa + fromZa * fromZa);
++            double toDist = Math.sqrt(toXa * toXa + toZa * toZa);
++            if (fromDist > longRangeMovementEventCancel || toDist > longRangeMovementEventCancel) {
++                LOGGER.error("LONGRANGE_TELEPORT EVENT DETECTED FROM " + fromXa + " " + fromZa + " " + fromDist + " " + this.player.getDisplayName());
++                return true;
++            }
++            if (toDist > longRangeMovementEventCancel) {
++                LOGGER.error("LONGRANGE_TELEPORT EVENT DETECTED TO " + toXa + " " + toZa + " " + toDist + " " + this.player.getDisplayName());
++                return true;
++            }
++        }
++        return false;
++    }
++    // Kaiiju end
++
+     @Override
+     public void handleMoveVehicle(ServerboundMoveVehiclePacket packet) {
+         if (dev.kaiijumc.kaiiju.KaiijuConfig.blockClientboundCoordExploits && this.noComGuard(packet)) return; // Kaiiju
+@@ -773,6 +796,8 @@ public class ServerGamePacketListenerImpl implements ServerPlayerConnection, Tic
+                         PlayerMoveEvent event = new PlayerMoveEvent(player, from, to);
+                         this.cserver.getPluginManager().callEvent(event);
+
++                        if ((!oldTo.equals(event.getTo()) || event.isCancelled()) && eventShouldBeCancelled(event.getFrom(), event.getTo())) return; // Kaiiju
++
+                         // If the event is cancelled we move the player back to their old location.
+                         if (event.isCancelled()) {
+                             this.teleport(from);
+@@ -1647,6 +1672,8 @@ public class ServerGamePacketListenerImpl implements ServerPlayerConnection, Tic
+                                         PlayerMoveEvent event = new PlayerMoveEvent(player, from, to);
+                                         this.cserver.getPluginManager().callEvent(event);
+
++                                        if ((!oldTo.equals(event.getTo()) || event.isCancelled()) && eventShouldBeCancelled(event.getFrom(), event.getTo())) return; // Kaiiju
++
+                                         // If the event is cancelled we move the player back to their old location.
+                                         if (event.isCancelled()) {
+                                             this.teleport(from);
+diff --git a/src/main/java/net/minecraft/world/entity/Entity.java b/src/main/java/net/minecraft/world/entity/Entity.java
+index 48b34e6f8..09c8dc867 100644
+--- a/src/main/java/net/minecraft/world/entity/Entity.java
++++ b/src/main/java/net/minecraft/world/entity/Entity.java
+@@ -3716,7 +3716,8 @@ public abstract class Entity implements Nameable, EntityAccess, CommandSource {
+                                        org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause, long teleportFlags,
+                                        java.util.function.Consumer<Entity> teleportComplete) {
+         io.papermc.paper.util.TickThread.ensureTickThread(this, "Cannot teleport entity async");
+-
++System.out.println("TELEPORT ASYNC ");
++Thread.dumpStack();
+         if (!ServerLevel.isInSpawnableBounds(new BlockPos(io.papermc.paper.util.CoordinateUtils.getBlockX(pos), io.papermc.paper.util.CoordinateUtils.getBlockY(pos), io.papermc.paper.util.CoordinateUtils.getBlockZ(pos)))) {
+             return false;
+         }
+diff --git a/src/main/java/org/bukkit/craftbukkit/entity/CraftEntity.java b/src/main/java/org/bukkit/craftbukkit/entity/CraftEntity.java
+index bfa8ce2d9..15b0a151a 100644
+--- a/src/main/java/org/bukkit/craftbukkit/entity/CraftEntity.java
++++ b/src/main/java/org/bukkit/craftbukkit/entity/CraftEntity.java
+@@ -1327,6 +1327,8 @@ public abstract class CraftEntity implements org.bukkit.entity.Entity {
+     // Paper start
+     @Override
+     public java.util.concurrent.CompletableFuture<Boolean> teleportAsync(Location location, TeleportCause cause) {
++System.out.println("TELEPORT ASYNC 2");
++Thread.dumpStack();
+         Preconditions.checkArgument(location != null, "location");
+         location.checkFinite();
+         Location locationClone = location.clone(); // clone so we don't need to worry about mutations after this call.
